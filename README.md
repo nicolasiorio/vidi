@@ -10,7 +10,7 @@ The theme lives in `theme/vidi.css`. On deploy, an idempotent script concatenate
 
 ## Status
 
-🚧 Early scaffolding. Spec phase next.
+🚧 Spec + plan approved (`feature/lxc-provisioning`). Build phase next — provisions the Debian 13 LXC, installs Invidious + invidious-companion + Postgres + cloudflared, and ships the theme deploy pipeline. See [`pipeline/spec.md`](pipeline/spec.md) and [`pipeline/sprint-plan.md`](pipeline/sprint-plan.md).
 
 ## License
 
