@@ -40,22 +40,23 @@ vidi/
   theme/
     vidi.css                  # source-of-truth theme — hand-written
   deploy/
-    lxc/                      # built incrementally in feature/lxc-provisioning
+    lxc/                      # complete — built on feature/lxc-provisioning
       README.md               # operator manual + manual prereqs
       VERSIONS                # pinned versions (Invidious tag, companion tag, host)
-      provision.sh            # one-shot bootstrap (idempotent) — Phases 1-5 done; Phase 6 (cloudflared) + theme deploy land in next batch
-      deploy.sh               # theme push (idempotent) — placeholder; implementation in Batch 3 (Task 7.1)
+      provision.sh            # one-shot bootstrap (idempotent) — Phases 1-7 (system → Postgres → Invidious → companion → cloudflared → theme)
+      deploy.sh               # theme push (idempotent) — fetches upstream CSS at pinned tag, concats theme, atomic push, restart Invidious
       lib/
         common.sh             # shared bash helpers (ssh_run, ssh_remote, ssh_push_file, log_*) — SSH ControlMaster multiplexed
         prereq-check.sh       # cloudflared CLI + cert.pem + SSH + LXC root checks
       config/
         invidious-config.yml.tpl    # rendered via envsubst → /etc/invidious/config.yml (symlinked to ./config/config.yml in source tree)
-        cloudflared-config.yml.tpl  # placeholder — Batch 3
+        cloudflared-config.yml.tpl  # rendered via envsubst → /etc/cloudflared/config.yml (TUNNEL_UUID + DOMAIN substitution)
         systemd/
           invidious.service           # main service (LXC-friendly hardening)
           invidious-restart.service   # oneshot wrapper: try-restart invidious (no deps — avoids timer-loop bug)
           invidious.timer             # OnUnitActiveSec=1h → invidious-restart
           invidious-companion.service # companion service (EnvironmentFile=/etc/invidious/secrets.env)
+        # cloudflared.service is generated on the LXC by `cloudflared service install` — no committed copy
   pipeline/                   # NoriCo pipeline artifacts (spec, sprint-plan, reviews)
   planning/                   # feature plans + per-plan artefacts
 ```
@@ -84,7 +85,7 @@ vidi/
 |------|---------------------|-----------------------|------------------|
 | prod | vidi (10.10.1.44)   | Proxmox LXC on norilab | vidi.karst.live |
 
-Spec at `pipeline/spec.md`. Plan at `planning/lxc-provisioning/plan.md`. Sprint roadmap (3 batches) at `pipeline/sprint-plan.md`. `deploy/lxc/*` scripts written during the `/build` phase.
+Spec at `pipeline/spec.md`. Plan at `planning/lxc-provisioning/plan.md`. Sprint roadmap (3 batches) at `pipeline/sprint-plan.md`. `deploy/lxc/*` scripts shipped on `feature/lxc-provisioning`; live state verified end-to-end on the prod LXC.
 
 ### Manual prerequisites (set up once before first provision)
 
@@ -93,7 +94,7 @@ Spec at `pipeline/spec.md`. Plan at `planning/lxc-provisioning/plan.md`. Sprint 
 3. **Cloudflare zone** — `karst.live` already exists in the operator's Cloudflare account.
 
 ## Known Issues
-- (None yet — project just scaffolded.)
+- (None.)
 
 ## Known Constraints
 - Invidious upstream releases ~6× per year; each release requires re-fetching `default.css` and re-concatenating.
