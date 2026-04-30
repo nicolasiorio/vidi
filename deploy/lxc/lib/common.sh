@@ -62,6 +62,17 @@ ssh_remote() {
     "${LXC_USER}@${LXC_HOST}" 'bash -s'
 }
 
+# Push a local file to the LXC, atomically (write to .tmp, then rename).
+# Usage: ssh_push_file <local-path> <remote-path>
+ssh_push_file() {
+  local src="$1" dst="$2"
+  : "${LXC_USER:?LXC_USER not set — call read_versions first}"
+  : "${LXC_HOST:?LXC_HOST not set — call read_versions first}"
+  [ -f "$src" ] || die "ssh_push_file: source file not found: $src"
+  ssh -T -o BatchMode=yes "${LXC_USER}@${LXC_HOST}" \
+    "cat > '${dst}.tmp' && mv '${dst}.tmp' '${dst}'" < "$src"
+}
+
 # ── Secrets ──────────────────────────────────────────────────────────
 # Generate a hex secret. Arg = byte length (output is 2*N hex chars).
 # Example: gen_secret 8  → 16-char hex (used for SERVER_SECRET_KEY).

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # vidi/deploy/lxc/provision.sh
 # One-shot LXC bootstrap. Idempotent — re-running is always safe.
-# Currently implements Phases 1–3 (foundation + system + Postgres).
-# Phases 4–7 land in subsequent build batches.
+# Currently implements Phases 1–5 (foundation, system, Postgres, Invidious,
+# companion). Phases 6–7 (cloudflared tunnel + theme deploy) land in the
+# next build batch.
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &>/dev/null && pwd )"
@@ -113,5 +114,124 @@ fi
 REMOTE
 log_ok "Phase 3.1 done."
 
-log_ok "Provision complete (Phases 1–3)."
-log_info "Next batch will add: Crystal toolchain, Invidious build, companion, cloudflared, theme deploy."
+# ─── Phase 4.1: Install Crystal + clone Invidious at pinned tag ───────
+log_info "Phase 4.1 — install Crystal + clone Invidious ${INVIDIOUS_TAG}"
+ssh_remote <<REMOTE
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# Crystal toolchain. Idempotent: install.sh handles existing source.
+if ! command -v crystal >/dev/null 2>&1; then
+  curl -fsSL https://crystal-lang.org/install.sh | bash
+fi
+
+# Clone or fetch Invidious. Run as the invidious user so it owns the tree.
+SRC=/home/invidious/invidious
+if [ ! -d "\$SRC/.git" ]; then
+  runuser -u invidious -- git clone --quiet https://github.com/iv-org/invidious.git "\$SRC"
+fi
+cd "\$SRC"
+if [ "\$(runuser -u invidious -- git describe --tags --exact-match 2>/dev/null || echo none)" != "${INVIDIOUS_TAG}" ]; then
+  runuser -u invidious -- git fetch --tags --quiet origin
+  runuser -u invidious -- git checkout --quiet "${INVIDIOUS_TAG}"
+fi
+REMOTE
+log_ok "Phase 4.1 done."
+
+# ─── Phase 4.3a: Render config.yml (must precede migrations) ──────────
+# NOTE: Plan order was 4.2-then-4.3, but `./invidious --migrate` needs a
+# working config.yml to connect to Postgres. We render config.yml here,
+# build + migrate in 4.2, then install systemd units in 4.3b.
+log_info "Phase 4.3a — render Invidious config.yml"
+ssh_push_file "${SCRIPT_DIR}/config/invidious-config.yml.tpl" /tmp/invidious-config.yml.tpl
+ssh_remote <<'REMOTE'
+set -euo pipefail
+install -d -m 0755 -o root -g root /etc/invidious
+set -a; source /etc/invidious/secrets.env; set +a
+envsubst < /tmp/invidious-config.yml.tpl > /etc/invidious/config.yml.tmp
+mv /etc/invidious/config.yml.tmp /etc/invidious/config.yml
+chmod 0640 /etc/invidious/config.yml
+chown invidious:invidious /etc/invidious/config.yml
+rm -f /tmp/invidious-config.yml.tpl
+
+# Invidious reads ./config/config.yml relative to WorkingDirectory; it
+# doesn't accept a custom config path. Symlink so secrets stay canonical
+# at /etc/invidious/ but the binary finds them where it expects.
+runuser -u invidious -- ln -sf /etc/invidious/config.yml /home/invidious/invidious/config/config.yml
+REMOTE
+log_ok "Phase 4.3a done."
+
+# ─── Phase 4.2: Build Invidious + run migrations ──────────────────────
+log_info "Phase 4.2 — build Invidious (Crystal compile, ~10-20 min) + migrate"
+ssh_remote <<REMOTE
+set -euo pipefail
+SRC=/home/invidious/invidious
+TAG_MARKER="\$SRC/.built_tag"
+
+# Build only if binary missing or tag changed.
+if [ ! -x "\$SRC/invidious" ] || [ "\$(cat \$TAG_MARKER 2>/dev/null || echo none)" != "${INVIDIOUS_TAG}" ]; then
+  runuser -u invidious -- bash -c "cd \$SRC && make"
+  echo "${INVIDIOUS_TAG}" > "\$TAG_MARKER"
+  chown invidious:invidious "\$TAG_MARKER"
+fi
+
+# Migrations are idempotent in Invidious.
+runuser -u invidious -- bash -c "cd \$SRC && ./invidious --migrate" >/dev/null
+REMOTE
+log_ok "Phase 4.2 done."
+
+# ─── Phase 4.3b: Install Invidious systemd units + hourly timer ───────
+log_info "Phase 4.3b — install systemd units + hourly restart timer"
+ssh_push_file "${SCRIPT_DIR}/config/systemd/invidious.service"         /etc/systemd/system/invidious.service
+ssh_push_file "${SCRIPT_DIR}/config/systemd/invidious-restart.service" /etc/systemd/system/invidious-restart.service
+ssh_push_file "${SCRIPT_DIR}/config/systemd/invidious.timer"           /etc/systemd/system/invidious.timer
+ssh_remote <<'REMOTE'
+set -euo pipefail
+chmod 0644 /etc/systemd/system/invidious.service \
+           /etc/systemd/system/invidious-restart.service \
+           /etc/systemd/system/invidious.timer
+systemctl daemon-reload
+systemctl enable --now invidious.service
+systemctl enable --now invidious.timer
+REMOTE
+log_ok "Phase 4.3b done."
+
+# ─── Phase 5.1: Download + extract companion binary ───────────────────
+log_info "Phase 5.1 — download companion (${COMPANION_TAG})"
+ssh_remote <<REMOTE
+set -euo pipefail
+COMPANION_DIR=/home/invidious/invidious-companion
+TAG_MARKER="\$COMPANION_DIR/.installed_tag"
+
+if [ "\$(cat \$TAG_MARKER 2>/dev/null || echo none)" != "${COMPANION_TAG}" ]; then
+  TARBALL=invidious_companion-x86_64-unknown-linux-gnu.tar.gz
+  URL=https://github.com/iv-org/invidious-companion/releases/download/${COMPANION_TAG}/\$TARBALL
+  rm -rf "\$COMPANION_DIR"
+  install -d -m 0755 -o invidious -g invidious "\$COMPANION_DIR"
+  wget -q -O /tmp/\$TARBALL "\$URL"
+  tar -xzf /tmp/\$TARBALL -C "\$COMPANION_DIR"
+  rm -f /tmp/\$TARBALL
+  chown -R invidious:invidious "\$COMPANION_DIR"
+  echo "${COMPANION_TAG}" > "\$TAG_MARKER"
+  chown invidious:invidious "\$TAG_MARKER"
+fi
+
+# Bind paths the companion writes to.
+install -d -m 0700 -o invidious -g invidious /home/invidious/tmp
+install -d -m 0700 -o invidious -g invidious /var/tmp/youtubei.js
+REMOTE
+log_ok "Phase 5.1 done."
+
+# ─── Phase 5.2: Install companion systemd unit + start ────────────────
+log_info "Phase 5.2 — install companion systemd unit + start"
+ssh_push_file "${SCRIPT_DIR}/config/systemd/invidious-companion.service" /etc/systemd/system/invidious-companion.service
+ssh_remote <<'REMOTE'
+set -euo pipefail
+chmod 0644 /etc/systemd/system/invidious-companion.service
+systemctl daemon-reload
+systemctl enable --now invidious-companion.service
+REMOTE
+log_ok "Phase 5.2 done."
+
+log_ok "Provision complete (Phases 1–5)."
+log_info "Next batch will add: cloudflared tunnel + theme deploy pipeline."

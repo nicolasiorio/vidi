@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly restart of Invidious (per upstream guidance)
+
+[Timer]
+OnBootSec=1h
+OnUnitActiveSec=1h
+Unit=invidious-restart.service
+# Persistent=true is intentionally NOT set: on initial enable it fires
+# the wrapper immediately, which is wasted (Invidious was just started).
+# Missing one hourly bounce after a reboot is acceptable.
+
+[Install]
+WantedBy=timers.target

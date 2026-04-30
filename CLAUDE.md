@@ -40,20 +40,22 @@ vidi/
   theme/
     vidi.css                  # source-of-truth theme — hand-written
   deploy/
-    lxc/                      # planned in feature/lxc-provisioning, built next
+    lxc/                      # built incrementally in feature/lxc-provisioning
       README.md               # operator manual + manual prereqs
       VERSIONS                # pinned versions (Invidious tag, companion tag, host)
-      provision.sh            # one-shot bootstrap (idempotent)
-      deploy.sh               # theme push (idempotent)
+      provision.sh            # one-shot bootstrap (idempotent) — Phases 1-5 done; Phase 6 (cloudflared) + theme deploy land in next batch
+      deploy.sh               # theme push (idempotent) — placeholder; implementation in Batch 3 (Task 7.1)
       lib/
-        common.sh             # shared bash helpers (ssh, secret gen, idempotency)
-        prereq-check.sh       # SSH + cert.pem + zone reachability check
+        common.sh             # shared bash helpers (ssh_run, ssh_remote, ssh_push_file, gen_secret, log_*)
+        prereq-check.sh       # cloudflared CLI + cert.pem + SSH + LXC root checks
       config/
-        invidious-config.yml.tpl
-        cloudflared-config.yml.tpl
+        invidious-config.yml.tpl    # rendered via envsubst → /etc/invidious/config.yml (symlinked to ./config/config.yml in source tree)
+        cloudflared-config.yml.tpl  # placeholder — Batch 3
         systemd/
-          invidious.service
-          invidious.timer
+          invidious.service           # main service (LXC-friendly hardening)
+          invidious-restart.service   # oneshot wrapper: try-restart invidious (no deps — avoids timer-loop bug)
+          invidious.timer             # OnUnitActiveSec=1h → invidious-restart
+          invidious-companion.service # companion service (EnvironmentFile=/etc/invidious/secrets.env)
           invidious-companion.service
   pipeline/                   # NoriCo pipeline artifacts (spec, sprint-plan, reviews)
   planning/                   # feature plans + per-plan artefacts

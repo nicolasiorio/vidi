@@ -143,8 +143,14 @@ No new third-party libraries added to the repo. Scripts are pure bash + system t
   - 💡 Why: `sudo -u invidious make` (10-20 min). Then `sudo -u invidious ./invidious --migrate` to apply DB schema. Detect already-built binary by mtime vs source dir — skip rebuild if same tag.
 
 - **Task 4.3: Render config.yml + install systemd unit + timer** (Diff: 4)
-  - Files: `deploy/lxc/config/invidious-config.yml.tpl`, `deploy/lxc/config/systemd/invidious.service`, `deploy/lxc/config/systemd/invidious.timer`, `deploy/lxc/provision.sh` (section)
-  - 💡 Why: Template covers `db.password`, `hmac_key`, `invidious_companion.private_url` (`http://127.0.0.1:8282/companion`), `invidious_companion_key`, `domain: vidi.karst.live`, `https_only: true`, `external_port: 443`, `registration_enabled: true`. Render via `envsubst` (sourcing `/etc/invidious/secrets.env`) → `/etc/invidious/config.yml` (mode 0640, owner invidious — secrets are baked into config.yml itself; Invidious does not read env vars). systemd unit copied from upstream verbatim (already correct: `User=invidious`, `WorkingDirectory=/home/invidious/invidious`, `Restart=always`, `RestartSec=2s`). Timer unit: `OnUnitActiveSec=1h`, `Unit=invidious.service`, `Persistent=true`.
+  - Files: `deploy/lxc/config/invidious-config.yml.tpl`, `deploy/lxc/config/systemd/{invidious.service,invidious.timer,invidious-restart.service}`, `deploy/lxc/provision.sh` (section)
+  - 💡 Why: Template covers `db.password`, `hmac_key`, `invidious_companion.private_url` (`http://127.0.0.1:8282/companion`), `invidious_companion_key`, `domain: vidi.karst.live`, `https_only: true`, `external_port: 443`, `registration_enabled: true`. Render via `envsubst` (sourcing `/etc/invidious/secrets.env`) → `/etc/invidious/config.yml` (mode 0640, owner invidious — secrets are baked into config.yml itself; Invidious does not read env vars).
+  - **Implementation deviations during /build:**
+    1. **Split into 4.3a (render) and 4.3b (systemd install)** — config.yml render must precede `./invidious --migrate` (Phase 4.2), because the migration command opens the database connection using config creds. Plan order had migrate before config which would crash.
+    2. **Symlink `/home/invidious/invidious/config/config.yml` → `/etc/invidious/config.yml`** — Invidious only reads `./config/config.yml` relative to its WorkingDirectory; there's no CLI flag for an alternate path. Symlink keeps secrets canonical at `/etc/invidious/`.
+    3. **Added `invidious-restart.service` oneshot wrapper.** Plan said the timer would `Unit=invidious.service`, but `systemctl start invidious.service` is a no-op on an already-active service — the timer would never actually restart anything. Wrapper is a `Type=oneshot` that runs `systemctl try-restart invidious.service`, with no `Requires=`/`After=` (early version with those triggered a SIGTERM loop because the wrapper got killed mid-restart by the Requires invariant when invidious briefly went down).
+    4. **Dropped `Persistent=true`** from the timer to avoid firing immediately on first enable. Missing one hourly bounce after a reboot is acceptable.
+    5. **Added LXC-friendly hardening** to `invidious.service` (`NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only` with `ReadWritePaths=/home/invidious/invidious`, `PrivateTmp`, kernel/cgroup protections). Same hardening on companion unit.
   - Dependencies: Tasks 4.1, 4.2, 3.1
 
 ### Phase 5: invidious-companion (Diff: 5)
@@ -243,12 +249,13 @@ This is infrastructure — no unit tests. Validation is end-to-end manual:
 | **Phase 3: PostgreSQL** | | | | |
 | 3.1 | Postgres install + secrets bootstrap + role/db | 4 | ✅ Complete | Batch 1 — `sudo -u postgres` swapped to `runuser -u postgres --` (bare Debian has no sudo) |
 | **Phase 4: Invidious build + config** | | | | |
-| 4.1 | Install Crystal + clone Invidious at pinned tag | 3 | ⏸️ Pending | |
-| 4.2 | Build Invidious + run migrations | 3 | ⏸️ Pending | |
-| 4.3 | Render config.yml + systemd unit + hourly timer | 4 | ⏸️ Pending | |
+| 4.1 | Install Crystal + clone Invidious at pinned tag | 3 | ✅ Complete | Batch 2 — `crystal-lang.org/install.sh` worked on Trixie out of the box |
+| 4.2 | Build Invidious + run migrations | 3 | ✅ Complete | Batch 2 — Crystal compile took ~2min on this LXC (faster than upstream's 10–20 min estimate). Migrate moved to run AFTER 4.3a config.yml render (otherwise crashes — Invidious needs config to connect to Postgres for migration). |
+| 4.3a | Render config.yml + symlink to source tree | 2 | ✅ Complete | Batch 2 — split out from 4.3. Symlinks `/home/invidious/invidious/config/config.yml` → `/etc/invidious/config.yml` because Invidious only reads `./config/config.yml` relative to WorkingDirectory; doesn't accept a config-path flag. |
+| 4.3b | Install systemd units + hourly restart timer | 2 | ✅ Complete | Batch 2 — added a third unit `invidious-restart.service` (oneshot wrapper, no deps, calls `systemctl try-restart invidious`). Plan's `Unit=invidious.service` in the timer wouldn't actually restart an already-active service. Dropped `Persistent=true` from timer to avoid an immediate fire on first enable. |
 | **Phase 5: invidious-companion** | | | | |
-| 5.1 | Download + extract companion binary | 2 | ⏸️ Pending | |
-| 5.2 | Companion systemd unit + EnvironmentFile | 3 | ⏸️ Pending | |
+| 5.1 | Download + extract companion binary | 2 | ✅ Complete | Batch 2 — tarball name `invidious_companion-x86_64-unknown-linux-gnu.tar.gz` at the `release-master` tag |
+| 5.2 | Companion systemd unit + EnvironmentFile | 3 | ✅ Complete | Batch 2 — companion validates PO tokens against YouTube on startup |
 | **Phase 6: Cloudflared tunnel** | | | | |
 | 6.1 | Create tunnel + DNS route from Mac | 4 | ⏸️ Pending | |
 | 6.2 | Install cloudflared on LXC + push creds + config | 3 | ⏸️ Pending | |

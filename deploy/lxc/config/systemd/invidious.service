@@ -1,0 +1,27 @@
+[Unit]
+Description=Invidious (alternative YouTube front-end)
+After=network-online.target postgresql.service invidious-companion.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=invidious
+Group=invidious
+WorkingDirectory=/home/invidious/invidious
+ExecStart=/home/invidious/invidious/invidious
+Restart=always
+RestartSec=2s
+
+# Hardening (LXC-friendly subset; no PrivateNetwork — we need network).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/home/invidious/invidious
+
+[Install]
+WantedBy=multi-user.target

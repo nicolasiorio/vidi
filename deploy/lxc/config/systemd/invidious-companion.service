@@ -1,0 +1,26 @@
+[Unit]
+Description=Invidious Companion (YouTube stream signature resolver)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=invidious
+Group=invidious
+WorkingDirectory=/home/invidious/invidious-companion
+EnvironmentFile=/etc/invidious/secrets.env
+ExecStart=/home/invidious/invidious-companion/invidious_companion
+Restart=always
+RestartSec=2s
+
+# Hardening (LXC-friendly subset).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/home/invidious/tmp /var/tmp/youtubei.js
+
+[Install]
+WantedBy=multi-user.target
