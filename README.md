@@ -10,7 +10,9 @@ The theme lives in `theme/vidi.css`. On deploy, an idempotent script concatenate
 
 ## Status
 
-🚧 Spec + plan approved (`feature/lxc-provisioning`). Build phase next — provisions the Debian 13 LXC, installs Invidious + invidious-companion + Postgres + cloudflared, and ships the theme deploy pipeline. See [`pipeline/spec.md`](pipeline/spec.md) and [`pipeline/sprint-plan.md`](pipeline/sprint-plan.md).
+✅ LXC provisioning + theme deploy pipeline shipped ([PR #1](https://github.com/nicolasiorio/vidi/pull/1)). Live at `vidi.karst.live`: two idempotent scripts (`deploy/lxc/provision.sh`, `deploy/lxc/deploy.sh`) take a bare Debian 13 LXC to a fully working Invidious + invidious-companion + Postgres + cloudflared stack with the theme applied. See [`deploy/lxc/README.md`](deploy/lxc/README.md) for the operator manual.
+
+🚧 Theme content next — `theme/vidi.css` currently ships empty; the actual glass-aesthetic rules land in a follow-up spec.
 
 ## License
 

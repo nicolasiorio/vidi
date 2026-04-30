@@ -40,7 +40,7 @@ vidi/
   theme/
     vidi.css                  # source-of-truth theme — hand-written
   deploy/
-    lxc/                      # complete — built on feature/lxc-provisioning
+    lxc/                      # complete — shipped to main via PR #1
       README.md               # operator manual + manual prereqs
       VERSIONS                # pinned versions (Invidious tag, companion tag, host)
       provision.sh            # one-shot bootstrap (idempotent) — Phases 1-7 (system → Postgres → Invidious → companion → cloudflared → theme)
@@ -85,7 +85,7 @@ vidi/
 |------|---------------------|-----------------------|------------------|
 | prod | vidi (10.10.1.44)   | Proxmox LXC on norilab | vidi.karst.live |
 
-Spec at `pipeline/spec.md`. Plan at `planning/lxc-provisioning/plan.md`. Sprint roadmap (3 batches) at `pipeline/sprint-plan.md`. `deploy/lxc/*` scripts shipped on `feature/lxc-provisioning`; live state verified end-to-end on the prod LXC.
+Spec at `pipeline/spec.md`. Plan at `planning/lxc-provisioning/plan.md`. Sprint roadmap (3 batches) at `pipeline/sprint-plan.md`. Review at `pipeline/review.md`. `deploy/lxc/*` shipped to `main` via [PR #1](https://github.com/nicolasiorio/vidi/pull/1); live state verified end-to-end on the prod LXC.
 
 ### Manual prerequisites (set up once before first provision)
 
