@@ -104,7 +104,7 @@ No new third-party libraries added to the repo. Scripts are pure bash + system t
 
 - **Task 1.2: Write `lib/common.sh`** (Diff: 4)
   - Files: `deploy/lxc/lib/common.sh`
-  - 💡 Why: All scripts need the same helpers. Centralize them once: `ssh_run "cmd"` (runs on LXC, exits non-zero on failure), `ssh_run_quiet`, `gen_secret <length>` (uses `openssl rand -hex`), `read_versions` (sources `VERSIONS`), `log_info` / `log_err` (colored output), `confirm "prompt"` for destructive actions.
+  - 💡 Why: All scripts need the same helpers. Centralize them once. Final shipped surface (after the /simplify pass that removed unused helpers): `ssh_run "cmd"` (single-line remote), `ssh_remote <<'REMOTE'…REMOTE` (multi-line via `bash -s`), `ssh_push_file src dst` (atomic local→remote write), `read_versions` (walks up to find + source `VERSIONS`), `log_info`/`log_ok`/`log_warn`/`log_err`/`die`. All three SSH helpers share a `SSH_OPTS` array with `ControlMaster auto` so subsequent calls reuse one TCP connection (~30% faster idempotent re-runs). `gen_secret`/`confirm` were drafted but dropped as YAGNI — Phase 3.1 calls `openssl rand -hex` directly inside its remote heredoc.
 
 - **Task 1.3: Write `lib/prereq-check.sh`** (Diff: 3)
   - Files: `deploy/lxc/lib/prereq-check.sh`
@@ -135,12 +135,12 @@ No new third-party libraries added to the repo. Scripts are pure bash + system t
 
 - **Task 4.1: Install Crystal + clone Invidious at pinned tag** (Diff: 3)
   - Files: `deploy/lxc/provision.sh` (section)
-  - 💡 Why: `curl -fsSL https://crystal-lang.org/install.sh | sudo bash` (idempotent — script handles existing source). Clone `github.com/iv-org/invidious` to `/home/invidious/invidious`, checkout `$INVIDIOUS_TAG`. On re-run with same tag: no-op via `git fetch --tags && git checkout $TAG`.
+  - 💡 Why: `curl -fsSL https://crystal-lang.org/install.sh | bash` (we're already root over SSH — no sudo). Clone `github.com/iv-org/invidious` to `/home/invidious/invidious` as the `invidious` user, checkout `$INVIDIOUS_TAG`. On re-run with same tag: no-op via `git fetch --tags && git checkout $TAG`.
   - Risk: OBS repo Trixie support — fallback uses Bookworm packages.
 
 - **Task 4.2: Build Invidious + run migrations** (Diff: 3)
   - Files: `deploy/lxc/provision.sh` (section)
-  - 💡 Why: `sudo -u invidious make` (10-20 min). Then `sudo -u invidious ./invidious --migrate` to apply DB schema. Detect already-built binary by mtime vs source dir — skip rebuild if same tag.
+  - 💡 Why: `runuser -u invidious -- make` (~2-20 min; ~2 min on this LXC, much faster than upstream's 10-20 min estimate — bare Debian has no `sudo`). Then `runuser -u invidious -- ./invidious --migrate` to apply DB schema. Detect already-built binary via a `.built_tag` marker file in the source dir — skip rebuild if marker matches `INVIDIOUS_TAG`.
 
 - **Task 4.3: Render config.yml + install systemd unit + timer** (Diff: 4)
   - Files: `deploy/lxc/config/invidious-config.yml.tpl`, `deploy/lxc/config/systemd/{invidious.service,invidious.timer,invidious-restart.service}`, `deploy/lxc/provision.sh` (section)
@@ -218,7 +218,7 @@ This is infrastructure — no unit tests. Validation is end-to-end manual:
 | `cloudflared tunnel create` requires `cert.pem` and Nicolas hasn't done it yet | 🔴 Critical | `prereq-check.sh` exits with explicit message + setup command before any LXC mutation. |
 | `secrets.env` accidentally committed | 🔴 Critical | Lives only on LXC, never on Mac. `.gitignore` already covers `.env`. |
 | Tunnel UUID collision on rerun | 🟡 Minor | Idempotent check via `cloudflared tunnel list --output json`. Reuse if exists. |
-| Companion key wrong length (must be exactly 16) | 🟠 Major | `gen_secret 16` enforces. Validated by upstream — Invidious refuses to start if length wrong, surfaces as journald error during 4.3 verify. |
+| Companion key wrong length (must be exactly 16) | 🟠 Major | Phase 3.1 generates with `openssl rand -hex 8` → exactly 16 hex chars. Validated by upstream — Invidious refuses to start if length wrong, surfaces as journald error during 4.3 verify. |
 | Theme deploy applied while Invidious is mid-restart from hourly timer | 🟡 Minor | `systemctl restart invidious` is sequential — one restart at a time. Worst case: deploy waits ~2s. Acceptable. |
 | Upstream changes asset path or build flow on next version bump | 🟠 Major | Version bump = re-test deploy. Mitigation captured in spec out-of-scope ("auto-bumping is manual"). |
 

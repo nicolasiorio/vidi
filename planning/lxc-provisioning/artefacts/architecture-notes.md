@@ -23,7 +23,9 @@
 │    ├── /etc/invidious/config.yml         (mode 0640)       │
 │    ├── /etc/invidious/secrets.env        (mode 0600)       │
 │    ├── systemd: invidious.service                          │
-│    └── systemd: invidious.timer  (OnUnitActiveSec=1h)      │
+│    ├── systemd: invidious.timer    (OnUnitActiveSec=1h)    │
+│    └── systemd: invidious-restart.service                  │
+│                 └─ oneshot: `systemctl try-restart invidious` │
 │              │                                              │
 │              │ HTTP /companion → 8282                       │
 │              ▼                                              │
@@ -62,7 +64,7 @@
 - `hmac_key`: signs Invidious's own session tokens. 32+ random hex chars. Stored in `/etc/invidious/secrets.env`; baked into `/etc/invidious/config.yml` at render time (Invidious does not read env vars — `config.yml` is its only source).
 - `invidious_companion_key`: shared secret between Invidious and companion. Must be **exactly 16 chars** per upstream. Same value lives in two places: as `invidious_companion_key:` in Invidious's `config.yml`, and as `SERVER_SECRET_KEY=` line in `secrets.env` (the companion systemd unit pulls it via `EnvironmentFile=/etc/invidious/secrets.env`).
 
-**Theme override is post-build.** Invidious's `make` builds the Crystal binary but does not bundle CSS — assets are served from disk (`/home/invidious/invidious/assets/css/default.css`). So our deploy mechanism is: fetch upstream `default.css` for the pinned tag, concatenate with `theme/vidi.css`, write atomically to the live path, send `SIGHUP`/restart Invidious. **Caveat:** `make` would clobber the override on rebuild → provision.sh ends by invoking deploy.sh.
+**Theme override is post-build.** Invidious's `make` builds the Crystal binary but does not bundle CSS — assets are served from disk (`/home/invidious/invidious/assets/css/default.css`). So our deploy mechanism is: fetch upstream `default.css` for the pinned tag, concatenate with `theme/vidi.css`, write atomically to the live path, then **restart Invidious** (the Crystal binary doesn't honour `SIGHUP` for asset reload — confirmed during /build). **Caveat:** `make` would clobber the override on rebuild → provision.sh ends by invoking deploy.sh.
 
 ## 🔌 Idempotency strategy
 
@@ -73,7 +75,7 @@ Every step uses one of these patterns:
 | `apt-get install -y <pkg>` (apt is naturally idempotent) | All apt installs |
 | `id <user> >/dev/null 2>&1 \|\| useradd ...` | User creation |
 | `[ -f /etc/invidious/secrets.env ] \|\| generate_secrets` | One-shot secret generation |
-| `psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='invidious'" \| grep -q 1 \|\| createuser ...` | Postgres role/db |
+| `runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='invidious'" \| grep -q 1 \|\| psql -c "CREATE ROLE ..."` | Postgres role/db (bare Debian has no `sudo`; we use `runuser` from util-linux) |
 | `cd /home/invidious/invidious && git fetch --tags && git checkout $TAG` | Source pin (no-op if already on tag) |
 | `cmp -s old new \|\| install -m ... new old && systemctl reload-or-restart` | Config file changes |
 | `cloudflared tunnel list \| grep -q vidi \|\| cloudflared tunnel create vidi` | Tunnel creation |
@@ -81,7 +83,7 @@ Every step uses one of these patterns:
 ## ⚠️ Known sharp edges
 
 1. **Crystal install on Trixie.** The official `crystal-lang.org/install.sh` script uses OBS. Trixie support depends on OBS. If it fails, fall back to manual sources.list with `bookworm` packages (Crystal binaries are libc-version-tolerant).
-2. **2GB RAM may not be enough to compile.** Upstream says 2.5GB minimum. Provision must add a 2GB swap file *before* `make`, then can leave it in place.
+2. **RAM floor for Crystal compile.** Upstream says 2.5GB minimum. ~~Provision must add a 2GB swap file *before* `make`.~~ Updated during /build: in-LXC `swapon` is kernel-blocked, so swap can't be created from inside the container. Provision asserts RAM ≥ 2500 MB; if a future bump is needed, set it from the Proxmox host (`pct set <CTID> -memory 4096 -swap 2048`). Current LXC has 3GB + 512MB host swap, sufficient.
 3. **systemd hardening in LXC.** Some `Protect*=` directives need namespace support. Most modern LXCs (unprivileged, post-Debian 11) work; if any fail with `Failed to set up mount namespacing`, soften incrementally.
 4. **`make` rebuild clobbers theme.** Provision must end by calling deploy. Document this contract.
 5. **Cloudflare `cert.pem` is a manual prereq.** Without `~/.cloudflared/cert.pem` on the Mac, `cloudflared tunnel create` fails. `prereq-check.sh` exits early with a clear message.
@@ -92,7 +94,7 @@ Every step uses one of these patterns:
 
 | Layer | Probe |
 |-------|-------|
-| Postgres | `sudo -u postgres psql -c '\du invidious'` |
+| Postgres | `runuser -u postgres -- psql -c '\du invidious'` |
 | Invidious | `curl -sf http://127.0.0.1:3000/api/v1/stats \| jq .software` |
 | Companion | `curl -sf http://127.0.0.1:8282/healthz` (or whatever its health endpoint is — verify in build) |
 | Tunnel | `cloudflared tunnel info vidi` (on Mac or LXC), `dig vidi.karst.live` |
