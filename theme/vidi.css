@@ -1,0 +1,9 @@
+/*
+ * vidi — modern glass theme for Invidious
+ *
+ * Aesthetic: translucent surfaces, soft shadows, rounded corners, modern geometric sans.
+ * Targets Invidious's stable BEM-ish class names; loaded after upstream default.css via
+ * concatenation at deploy time.
+ *
+ * Real rules land during the /build phase.
+ */
