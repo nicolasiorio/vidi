@@ -1,0 +1,12 @@
+[Unit]
+Description=Restart Invidious (oneshot wrapper for invidious.timer)
+# No Requires=/After= on invidious.service. Earlier versions had both;
+# during the wrapper's `systemctl restart`, the brief stop of invidious
+# caused systemd to SIGTERM this oneshot (Requires invariant), and the
+# unit kept getting re-queued until start-limit-hit. Independent unit
+# avoids the loop entirely. `try-restart` is a no-op when invidious is
+# inactive — ideal for a "bounce if running" semantic.
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl try-restart invidious.service

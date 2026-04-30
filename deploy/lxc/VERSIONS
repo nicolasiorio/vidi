@@ -1,0 +1,16 @@
+# vidi — pinned versions for the LXC deploy.
+# Bumped deliberately, never auto-pulled. Sourced by every script.
+
+# Invidious upstream tag — https://github.com/iv-org/invidious/releases
+INVIDIOUS_TAG=v2.20260207.0
+
+# invidious-companion release tag — https://github.com/iv-org/invidious-companion/releases
+COMPANION_TAG=release-master
+
+# LXC connection (already provisioned; SSH key auth assumed — see README)
+LXC_HOST=10.10.1.44
+LXC_USER=root
+
+# Cloudflare tunnel
+TUNNEL_NAME=vidi
+DOMAIN=vidi.karst.live

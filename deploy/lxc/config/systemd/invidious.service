@@ -1,0 +1,31 @@
+[Unit]
+Description=Invidious (alternative YouTube front-end)
+# After= without Wants= on companion is intentional: Invidious starts
+# after companion if both are queued, but doesn't fail or block when
+# companion is down. Companion failure → no playback, but the UI still
+# loads. Postgres is a hard requirement (no DB → won't start).
+After=network-online.target postgresql.service invidious-companion.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=invidious
+Group=invidious
+WorkingDirectory=/home/invidious/invidious
+ExecStart=/home/invidious/invidious/invidious
+Restart=always
+RestartSec=2s
+
+# Hardening (LXC-friendly subset; no PrivateNetwork — we need network).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/home/invidious/invidious
+
+[Install]
+WantedBy=multi-user.target
