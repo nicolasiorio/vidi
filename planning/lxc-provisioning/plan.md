@@ -89,7 +89,7 @@ No new third-party libraries added to the repo. Scripts are pure bash + system t
 5. **No existing Invidious or Postgres state on the LXC.** First-run assumption. Idempotency makes re-runs safe but we don't try to migrate from a partial install.
 6. **Postgres 17 + Invidious is compatible.** Invidious uses standard SQL (no version-specific features). Confirmed by community reports.
 7. **systemd hardening directives work in this LXC.** Modern unprivileged Debian LXCs support `ProtectSystem=strict`, `PrivateTmp`, etc. We start with full hardening and soften only if it breaks.
-8. **Compiling Crystal binary requires ~2.5GB RAM, but LXC has 2GB.** Provision adds a 2GB swap file before `make`.
+8. **Compiling Crystal binary requires ~2.5GB RAM. LXC has 3GB + 512MB host-managed swap.** ~~Provision adds a 2GB swap file before `make`.~~ Updated during /build: in-LXC `swapon` is kernel-blocked, so swap is not creatable from inside the container. Provision now does a RAM-floor check (`<2500MB → die`) and relies on the existing 3GB host allocation. If a future bump is needed: `pct set <CTID> -memory N -swap N` from the Proxmox host.
 9. **`crystal-lang.org/install.sh` supports Debian 13** (or its OBS source has a Trixie target). Fallback: pin Bookworm packages explicitly.
 
 ## 🔨 Implementation Phases
@@ -116,13 +116,13 @@ No new third-party libraries added to the repo. Scripts are pure bash + system t
 
 ### Phase 2: System bootstrap (Diff: 5)
 
-- **Task 2.1: apt baseline + locale + timezone + swap** (Diff: 3)
+- **Task 2.1: apt baseline + locale + timezone + RAM floor check** (Diff: 3)
   - Files: `deploy/lxc/provision.sh` (section)
-  - 💡 Why: First section of provision.sh. `apt update && apt full-upgrade -y`, set locale (`locale-gen en_US.UTF-8`), timezone (`timedatectl set-timezone UTC`), create 2GB `/swapfile` if not present (Crystal needs >2GB RAM to compile).
+  - 💡 Why: First section of provision.sh. `apt update && apt full-upgrade -y`, set locale (`locale-gen en_US.UTF-8`), timezone (`timedatectl set-timezone UTC`), assert RAM ≥ 2500 MB (Crystal needs >2.5GB; LXC swap is host-managed and can't be created from inside the container).
 
 - **Task 2.2: Install build deps + create invidious user** (Diff: 2)
   - Files: `deploy/lxc/provision.sh` (section)
-  - 💡 Why: One apt install for everything: `libssl-dev libxml2-dev libyaml-dev libgmp-dev libreadline-dev librsvg2-bin libsqlite3-dev zlib1g-dev libpcre3-dev libevent-dev fonts-open-sans pwgen git make gettext-base jq`. User: `useradd -m -s /bin/bash invidious` (matches upstream convention; locked password).
+  - 💡 Why: One apt install for everything: `libssl-dev libxml2-dev libyaml-dev libgmp-dev libreadline-dev librsvg2-bin libsqlite3-dev zlib1g-dev libpcre2-dev libevent-dev fonts-open-sans pwgen git make gettext-base jq`. User: `useradd -m -s /bin/bash invidious` (matches upstream convention; locked password). Note: Trixie dropped legacy PCRE1, so `libpcre2-dev` is the correct dep (Crystal ≥1.8 uses PCRE2).
 
 ### Phase 3: PostgreSQL (Diff: 4)
 
@@ -190,7 +190,7 @@ This is infrastructure — no unit tests. Validation is end-to-end manual:
 
 | Layer | Test |
 |-------|------|
-| Postgres | `ssh root@10.10.1.44 'sudo -u postgres psql -c "\du invidious"'` shows role exists |
+| Postgres | `ssh root@10.10.1.44 'runuser -u postgres -- psql -c "\du invidious"'` shows role exists (bare Debian has no `sudo`; we use `runuser` from util-linux) |
 | Invidious | `ssh root@10.10.1.44 'curl -sf http://127.0.0.1:3000/api/v1/stats'` returns JSON |
 | Companion | `ssh root@10.10.1.44 'curl -sIf http://127.0.0.1:8282'` returns any 2xx/3xx/4xx (proves listening) |
 | Tunnel ingress | `curl -sIf https://vidi.karst.live` returns `200 OK` with valid TLS |
@@ -205,7 +205,7 @@ This is infrastructure — no unit tests. Validation is end-to-end manual:
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | Crystal install fails on Trixie via OBS | 🟠 Major | Fallback path: explicit Bookworm sources.list. Test in Phase 4.1; if it fails, edit fallback into the script. |
-| 2GB LXC RAM insufficient to compile Invidious | 🟠 Major | Provision adds 2GB swap *before* `make`. Documented in README. |
+| LXC RAM insufficient to compile Invidious (in-LXC `swapon` is kernel-blocked) | 🟠 Major | Provision asserts RAM ≥ 2500 MB; current LXC has 3GB + 512MB host swap (sufficient). If Crystal ever OOMs on a version bump: `pct set <CTID> -memory 4096 -swap 2048` from the Proxmox host. Documented in CLAUDE.md "Known Constraints". |
 | Cloudflared apt repo lacks Trixie suite | 🟡 Minor | Try `trixie` first, fall back to `bookworm`. Bookworm .deb runs fine on Trixie (glibc-compatible). |
 | `make` rebuild on re-provision clobbers theme | 🟠 Major | `provision.sh` ends with `./deploy.sh`. Documented in README and architecture-notes. |
 | systemd hardening fails in LXC namespace | 🟡 Minor | Start with full hardening; document soft-fail strategy in `architecture-notes.md`. If a directive fails, drop it from the unit file (not silently ignore). |
@@ -227,6 +227,43 @@ This is infrastructure — no unit tests. Validation is end-to-end manual:
 - Multi-instance / HA
 - SMTP / Invidious email features
 - Auto-bumping upstream version
+
+## 📊 Implementation Progress
+
+| Phase | Task | Diff | Status | Notes |
+|-------|------|------|--------|-------|
+| **Phase 1: Foundation** | | | | |
+| 1.1 | Create repo skeleton (placeholders) | 2 | ✅ Complete | Batch 1 |
+| 1.2 | Write `lib/common.sh` shared helpers | 4 | ✅ Complete | Batch 1 |
+| 1.3 | Write `lib/prereq-check.sh` | 3 | ✅ Complete | Batch 1 — verified live (caught 3 missing prereqs, all resolved) |
+| 1.4 | Write operator README | 2 | ✅ Complete | Batch 1 |
+| **Phase 2: System bootstrap** | | | | |
+| 2.1 | apt baseline + locale + tz + RAM-floor check | 3 | ✅ Complete | Batch 1 — swap dropped (LXC kernel-blocks `swapon`); RAM-floor guard ≥2500MB instead. Spec FR-001 + plan assumption #8 + CLAUDE.md updated. |
+| 2.2 | Build deps + invidious system user | 2 | ✅ Complete | Batch 1 — `libpcre3-dev` swapped to `libpcre2-dev` (Trixie dropped PCRE1) |
+| **Phase 3: PostgreSQL** | | | | |
+| 3.1 | Postgres install + secrets bootstrap + role/db | 4 | ✅ Complete | Batch 1 — `sudo -u postgres` swapped to `runuser -u postgres --` (bare Debian has no sudo) |
+| **Phase 4: Invidious build + config** | | | | |
+| 4.1 | Install Crystal + clone Invidious at pinned tag | 3 | ⏸️ Pending | |
+| 4.2 | Build Invidious + run migrations | 3 | ⏸️ Pending | |
+| 4.3 | Render config.yml + systemd unit + hourly timer | 4 | ⏸️ Pending | |
+| **Phase 5: invidious-companion** | | | | |
+| 5.1 | Download + extract companion binary | 2 | ⏸️ Pending | |
+| 5.2 | Companion systemd unit + EnvironmentFile | 3 | ⏸️ Pending | |
+| **Phase 6: Cloudflared tunnel** | | | | |
+| 6.1 | Create tunnel + DNS route from Mac | 4 | ⏸️ Pending | |
+| 6.2 | Install cloudflared on LXC + push creds + config | 3 | ⏸️ Pending | |
+| **Phase 7: Theme deploy pipeline** | | | | |
+| 7.1 | Write `deploy.sh` (theme override pipeline) | 5 | ⏸️ Pending | |
+| **Phase 8: Idempotency + manual test pass** | | | | |
+| 8.1 | Re-run provision; verify no-op | 2 | ⏸️ Pending | |
+| 8.2 | Cosmetic theme tweak deploy round-trip | 2 | ⏸️ Pending | |
+
+**Legend:** ✅ Complete | 🔄 In Progress | ⏸️ Pending | ❌ Blocked
+
+**Batches** (per `pipeline/sprint-plan.md`):
+- **Batch 1** (Diff 15): Tasks 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 3.1 — Foundation + System bootstrap + Postgres
+- **Batch 2** (Diff 13): Tasks 4.1, 4.2, 4.3, 5.1, 5.2 — Invidious + Companion running locally
+- **Batch 3** (Diff 16): Tasks 6.1, 6.2, 7.1, 8.1, 8.2 — Public access + Theme + Idempotency
 
 ## 🤝 Context Handover
 

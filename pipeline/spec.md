@@ -12,13 +12,13 @@
 ## ✅ Requirements
 
 ### FR-001: LXC bootstrap
-- **Description:** Bring bare Debian 13 LXC to baseline (apt updated, locale, timezone, 2GB swap, build deps, `invidious` system user).
+- **Description:** Bring bare Debian 13 LXC to baseline (apt updated, locale, timezone, RAM-floor check, build deps, `invidious` system user).
 - **Error Handling:** 🚨 Alert (exits non-zero with clear message)
 - **Acceptance Criteria:**
   - [ ] apt index up to date, system upgraded
   - [ ] Locale `en_US.UTF-8`, timezone `UTC`
-  - [ ] 2GB swap file at `/swapfile` (Crystal compile needs >2.5GB RAM, LXC has 2GB)
-  - [ ] Crystal toolchain + Invidious build deps installed (libssl, libxml2, libyaml, libgmp, libreadline, libsqlite3, zlib, libpcre3, libevent, librsvg2-bin, fonts-open-sans, pwgen, git, make, gettext-base, jq)
+  - [ ] RAM floor check: provision aborts if LXC has <2500 MB RAM (Crystal compile peaks ~2.5GB; LXC swap is host-managed via `pct set <CTID> -swap N`, can't be created from inside the container)
+  - [ ] Crystal toolchain + Invidious build deps installed (libssl, libxml2, libyaml, libgmp, libreadline, libsqlite3, zlib, libpcre2, libevent, librsvg2-bin, fonts-open-sans, pwgen, git, make, gettext-base, jq)
   - [ ] System user `invidious` exists with home dir `/home/invidious`, locked password
   - [ ] Re-running on provisioned host is a no-op
 
@@ -108,7 +108,7 @@
   - [ ] End-to-end playback works (proves Invidious ↔ companion handshake)
 
 ## ⚙️ Non-Functional Requirements
-- **Performance:** Provision < 30 min on 2 vCPU / 2GB LXC (Crystal compile dominates). Deploy < 30s.
+- **Performance:** Provision < 30 min on 2 vCPU / 3GB LXC + host-managed swap (Crystal compile dominates). Deploy < 30s.
 - **Security:** All secrets `0600` in `/etc/invidious/`, never committed. Postgres, Invidious, and companion all bind localhost. cloudflared the only ingress.
 - **Reliability:** `Restart=always` with `RestartSec=2s` for invidious, invidious-companion, and cloudflared (matches upstream units). Hourly restart timer for Invidious per upstream guidance.
 - **Observability:** journald only.

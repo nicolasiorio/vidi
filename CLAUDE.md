@@ -99,7 +99,7 @@ Spec at `pipeline/spec.md`. Plan at `planning/lxc-provisioning/plan.md`. Sprint 
 - CSS override only — anything requiring a new `<link>` tag or `<head>` content would need a fork + Crystal recompile.
 - AGPLv3 boundary: this repo is MIT, but we never link/embed Invidious source. The boundary is the static-asset interface.
 - Companion mandatory: Invidious without `invidious-companion` runs but cannot play videos (sig-helper deprecation, 2025).
-- Crystal compile needs >2.5GB RAM; LXC has 2GB → 2GB swap file added during bootstrap.
+- Crystal compile needs >2.5GB RAM. LXC has 3GB + 512MB host-managed swap (`pct set <CTID> -swap`). Provision aborts if RAM < 2500MB. In-LXC `swapon` is kernel-blocked, so we don't try to create swap from inside the container.
 - Hourly restart interrupts viewing for ~2s. Acceptable for personal instance; upstream-recommended.
 
 ## Lessons Learned
