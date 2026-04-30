@@ -88,11 +88,9 @@ if [ ! -f /etc/invidious/secrets.env ]; then
   HMAC_KEY=$(openssl rand -hex 32)
   SERVER_SECRET_KEY=$(openssl rand -hex 8)
   umask 077
-  cat > /etc/invidious/secrets.env <<EOF
-POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-HMAC_KEY=$HMAC_KEY
-SERVER_SECRET_KEY=$SERVER_SECRET_KEY
-EOF
+  printf 'POSTGRES_PASSWORD=%s\nHMAC_KEY=%s\nSERVER_SECRET_KEY=%s\n' \
+    "$POSTGRES_PASSWORD" "$HMAC_KEY" "$SERVER_SECRET_KEY" \
+    > /etc/invidious/secrets.env
   chown invidious:invidious /etc/invidious/secrets.env
   chmod 0600 /etc/invidious/secrets.env
 fi
@@ -147,11 +145,14 @@ ssh_push_file "${SCRIPT_DIR}/config/invidious-config.yml.tpl" /tmp/invidious-con
 ssh_remote <<'REMOTE'
 set -euo pipefail
 install -d -m 0755 -o root -g root /etc/invidious
+
+# umask 027 ensures the rendered file is 0640 from creation — no window
+# where it sits world-readable between mv and chmod.
+umask 027
 set -a; source /etc/invidious/secrets.env; set +a
 envsubst < /tmp/invidious-config.yml.tpl > /etc/invidious/config.yml.tmp
+chown invidious:invidious /etc/invidious/config.yml.tmp
 mv /etc/invidious/config.yml.tmp /etc/invidious/config.yml
-chmod 0640 /etc/invidious/config.yml
-chown invidious:invidious /etc/invidious/config.yml
 rm -f /tmp/invidious-config.yml.tpl
 
 # Invidious reads ./config/config.yml relative to WorkingDirectory; it
@@ -162,20 +163,18 @@ REMOTE
 log_ok "Phase 4.3a done."
 
 # ─── Phase 4.2: Build Invidious + run migrations ──────────────────────
-log_info "Phase 4.2 — build Invidious (Crystal compile, ~10-20 min) + migrate"
+log_info "Phase 4.2 — build Invidious (Crystal compile, first run ~2-20 min) + migrate"
 ssh_remote <<REMOTE
 set -euo pipefail
 SRC=/home/invidious/invidious
 TAG_MARKER="\$SRC/.built_tag"
 
-# Build only if binary missing or tag changed.
 if [ ! -x "\$SRC/invidious" ] || [ "\$(cat \$TAG_MARKER 2>/dev/null || echo none)" != "${INVIDIOUS_TAG}" ]; then
   runuser -u invidious -- bash -c "cd \$SRC && make"
   echo "${INVIDIOUS_TAG}" > "\$TAG_MARKER"
   chown invidious:invidious "\$TAG_MARKER"
 fi
 
-# Migrations are idempotent in Invidious.
 runuser -u invidious -- bash -c "cd \$SRC && ./invidious --migrate" >/dev/null
 REMOTE
 log_ok "Phase 4.2 done."
@@ -216,7 +215,6 @@ if [ "\$(cat \$TAG_MARKER 2>/dev/null || echo none)" != "${COMPANION_TAG}" ]; th
   chown invidious:invidious "\$TAG_MARKER"
 fi
 
-# Bind paths the companion writes to.
 install -d -m 0700 -o invidious -g invidious /home/invidious/tmp
 install -d -m 0700 -o invidious -g invidious /var/tmp/youtubei.js
 REMOTE

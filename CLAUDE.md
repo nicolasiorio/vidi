@@ -46,7 +46,7 @@ vidi/
       provision.sh            # one-shot bootstrap (idempotent) — Phases 1-5 done; Phase 6 (cloudflared) + theme deploy land in next batch
       deploy.sh               # theme push (idempotent) — placeholder; implementation in Batch 3 (Task 7.1)
       lib/
-        common.sh             # shared bash helpers (ssh_run, ssh_remote, ssh_push_file, gen_secret, log_*)
+        common.sh             # shared bash helpers (ssh_run, ssh_remote, ssh_push_file, log_*) — SSH ControlMaster multiplexed
         prereq-check.sh       # cloudflared CLI + cert.pem + SSH + LXC root checks
       config/
         invidious-config.yml.tpl    # rendered via envsubst → /etc/invidious/config.yml (symlinked to ./config/config.yml in source tree)
@@ -56,7 +56,6 @@ vidi/
           invidious-restart.service   # oneshot wrapper: try-restart invidious (no deps — avoids timer-loop bug)
           invidious.timer             # OnUnitActiveSec=1h → invidious-restart
           invidious-companion.service # companion service (EnvironmentFile=/etc/invidious/secrets.env)
-          invidious-companion.service
   pipeline/                   # NoriCo pipeline artifacts (spec, sprint-plan, reviews)
   planning/                   # feature plans + per-plan artefacts
 ```
