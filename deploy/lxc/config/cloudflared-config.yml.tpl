@@ -1,3 +1,10 @@
-# vidi/deploy/lxc/config/cloudflared-config.yml.tpl
-# Templated cloudflared config. Rendered via `envsubst` with TUNNEL_UUID +
-# DOMAIN at provision time. Implementation lands in build Batch 3 (Task 6.2).
+# vidi cloudflared tunnel config — rendered via envsubst at provision time
+# (provision.sh Phase 6.2). Substituted vars: TUNNEL_UUID, DOMAIN.
+
+tunnel: ${TUNNEL_UUID}
+credentials-file: /etc/cloudflared/vidi.json
+
+ingress:
+  - hostname: ${DOMAIN}
+    service: http://127.0.0.1:3000
+  - service: http_status:404

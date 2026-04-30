@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # vidi/deploy/lxc/provision.sh
 # One-shot LXC bootstrap. Idempotent — re-running is always safe.
-# Currently implements Phases 1–5 (foundation, system, Postgres, Invidious,
-# companion). Phases 6–7 (cloudflared tunnel + theme deploy) land in the
-# next build batch.
+# Phase 6.1 runs locally on the Mac (Cloudflare tunnel CRUD needs cert.pem),
+# everything else runs over SSH. Final step calls deploy.sh so the theme
+# survives the make rebuild that fires on version bumps.
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &>/dev/null && pwd )"
@@ -231,5 +231,100 @@ systemctl enable --now invidious-companion.service
 REMOTE
 log_ok "Phase 5.2 done."
 
-log_ok "Provision complete (Phases 1–5)."
-log_info "Next batch will add: cloudflared tunnel + theme deploy pipeline."
+# ─── Phase 6.1: Create / reuse Cloudflare tunnel + DNS route (Mac-side) ─
+log_info "Phase 6.1 — Cloudflare tunnel + DNS route"
+
+# Tunnel CRUD lives on the Mac because it needs ~/.cloudflared/cert.pem.
+TUNNEL_UUID=$(cloudflared tunnel list --output json \
+  | jq -r --arg n "$TUNNEL_NAME" '.[] | select(.name==$n) | .id' \
+  | head -n1)
+
+if [ -z "$TUNNEL_UUID" ]; then
+  log_info "Creating tunnel '${TUNNEL_NAME}'…"
+  cloudflared tunnel create "$TUNNEL_NAME" >/dev/null
+  TUNNEL_UUID=$(cloudflared tunnel list --output json \
+    | jq -r --arg n "$TUNNEL_NAME" '.[] | select(.name==$n) | .id' \
+    | head -n1)
+  [ -n "$TUNNEL_UUID" ] || die "Failed to read UUID for created tunnel '${TUNNEL_NAME}'"
+else
+  log_info "Tunnel '${TUNNEL_NAME}' exists (UUID ${TUNNEL_UUID:0:8}…)."
+fi
+
+# DNS route. Cloudflared returns non-zero if the record already exists —
+# we treat that as success since both states converge on the same thing.
+route_out=$(cloudflared tunnel route dns "$TUNNEL_NAME" "$DOMAIN" 2>&1) || true
+if echo "$route_out" | grep -qiE 'already (exists|configured|points to)'; then
+  log_info "DNS route ${DOMAIN} already configured."
+elif echo "$route_out" | grep -qiE '(created|added|propagated)'; then
+  log_ok "DNS route ${DOMAIN} → ${TUNNEL_NAME}"
+else
+  printf '%s\n' "$route_out" >&2
+  die "cloudflared tunnel route dns failed unexpectedly"
+fi
+
+CRED_FILE="${HOME}/.cloudflared/${TUNNEL_UUID}.json"
+[ -f "$CRED_FILE" ] || die "Credentials file missing: $CRED_FILE"
+log_ok "Phase 6.1 done."
+
+# ─── Phase 6.2: Install cloudflared on LXC + push creds + config ──────
+log_info "Phase 6.2 — install cloudflared on LXC + push credentials + config"
+ssh_remote <<'REMOTE'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+if ! command -v cloudflared >/dev/null 2>&1; then
+  install -d -m 0755 /usr/share/keyrings
+  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+    -o /usr/share/keyrings/cloudflare-main.gpg
+
+  # Try the Trixie suite first; if Cloudflare hasn't published it yet,
+  # the Bookworm .deb is glibc-compatible and runs fine on Trixie.
+  for SUITE in trixie bookworm; do
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $SUITE main" \
+      > /etc/apt/sources.list.d/cloudflared.list
+    if apt-get update -qq && apt-get install -y -qq cloudflared; then
+      break
+    fi
+  done
+  command -v cloudflared >/dev/null 2>&1 \
+    || { echo "ERROR: cloudflared install failed for both suites" >&2; exit 1; }
+fi
+
+install -d -m 0755 -o root -g root /etc/cloudflared
+REMOTE
+
+ssh_push_file "$CRED_FILE" /etc/cloudflared/vidi.json
+ssh_run "chmod 0600 /etc/cloudflared/vidi.json"
+
+# Render config locally (envsubst on Mac), then push atomically.
+RENDERED_CONF=$(mktemp)
+TUNNEL_UUID="$TUNNEL_UUID" DOMAIN="$DOMAIN" \
+  envsubst '${TUNNEL_UUID} ${DOMAIN}' \
+  < "${SCRIPT_DIR}/config/cloudflared-config.yml.tpl" \
+  > "$RENDERED_CONF"
+ssh_push_file "$RENDERED_CONF" /etc/cloudflared/config.yml
+rm -f "$RENDERED_CONF"
+ssh_run "chmod 0644 /etc/cloudflared/config.yml"
+
+# cloudflared deb doesn't ship a unit file — `cloudflared service install`
+# (no token) generates one pointing at /etc/cloudflared/config.yml. Guard so
+# re-runs don't reinstall.
+ssh_remote <<'REMOTE'
+set -euo pipefail
+if [ ! -f /etc/systemd/system/cloudflared.service ]; then
+  cloudflared service install
+fi
+systemctl daemon-reload
+systemctl enable --now cloudflared
+REMOTE
+log_ok "Phase 6.2 done."
+
+# ─── Phase 7: Apply theme override (delegate to deploy.sh) ────────────
+# Re-running provision triggers `make`, which restores upstream's
+# default.css. Calling deploy.sh here re-applies the theme so the live
+# state always matches `theme/vidi.css`.
+log_info "Phase 7 — apply theme via deploy.sh"
+"${SCRIPT_DIR}/deploy.sh"
+log_ok "Phase 7 done."
+
+log_ok "Provision complete."

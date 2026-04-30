@@ -88,6 +88,9 @@ deploy/lxc/
     ├── cloudflared-config.yml.tpl
     └── systemd/
         ├── invidious.service
-        ├── invidious.timer
+        ├── invidious-restart.service   ← oneshot wrapper invoked by the timer
+        ├── invidious.timer             ← hourly upstream-recommended restart
         └── invidious-companion.service
 ```
+
+The `cloudflared.service` unit is generated on the LXC by `cloudflared service install` during Phase 6.2 (no committed copy — keeps us aligned with the upstream-supported install path).
