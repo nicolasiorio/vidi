@@ -28,14 +28,14 @@ trap 'rm -rf "$TMP"' EXIT
 UPSTREAM="${TMP}/upstream.css"
 COMBINED="${TMP}/combined.css"
 
-gh api -H 'Accept: application/vnd.github.raw' \
-  "repos/iv-org/invidious/contents/assets/css/default.css?ref=${INVIDIOUS_TAG}" \
-  > "$UPSTREAM" \
+curl -fsSL \
+  "https://raw.githubusercontent.com/iv-org/invidious/${INVIDIOUS_TAG}/assets/css/default.css" \
+  -o "$UPSTREAM" \
   || die "Failed to fetch upstream default.css for ${INVIDIOUS_TAG}"
 [ -s "$UPSTREAM" ] || die "Fetched upstream default.css is empty"
 
 cat "$UPSTREAM" "$THEME_CSS" > "$COMBINED"
-NEW_HASH=$(sha256sum "$COMBINED" | cut -d' ' -f1)
+NEW_HASH=$(shasum -a 256 "$COMBINED" | cut -d' ' -f1)
 
 # Hash the live remote file (not a marker file): catches the case where
 # `make` has restored upstream's default.css since the last theme deploy.
